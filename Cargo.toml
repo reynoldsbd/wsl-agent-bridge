@@ -1,0 +1,11 @@
+[package]
+name = "nprox"
+version = "0.1.0"
+authors = ["Bobby Reynolds <bobby@reynoldsbd.net>"]
+edition = "2018"
+
+[dependencies]
+futures = "0.1"
+tokio = "0.1"
+tokio-uds-windows = { git = "https://github.com/Azure/tokio-uds-windows" }
+tokio-named-pipe = { git = "https://github.com/Azure/iotedge" }
