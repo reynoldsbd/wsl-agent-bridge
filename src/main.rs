@@ -14,9 +14,7 @@ use tokio_uds_windows::UnixListener;
 compile_error!("this is a Windows-only utility");
 
 
-const AGENT_PIPE: &str = "\\\\.\\pipe\\openssh-ssh-agent";
 const DEFAULT_SOCK: &str = "ssh-agent.sock";
-
 
 /// Gets path for the bridge socket
 fn get_sock_path() -> PathBuf {
@@ -34,6 +32,8 @@ fn get_sock_path() -> PathBuf {
     }
 }
 
+
+const AGENT_PIPE: &str = "\\\\.\\pipe\\openssh-ssh-agent";
 
 /// Proxies an incoming connection to the real ssh-agent
 fn proxy_to_agent_pipe<C>(client: C) -> Result<(), std::io::Error>
