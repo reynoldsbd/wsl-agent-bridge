@@ -1,9 +1,11 @@
 # WSL Agent Bridge
 
-This utility allows the Windows port of ssh-agent to be used by WSL programs.
+This utility allows [the Windows port of ssh-agent](https://github.com/PowerShell/Win32-OpenSSH/wiki)
+to be used by WSL programs.
 
-It works by creating a Unix socket accessible from WSL that can be used as `$SSH_AUTH_SOCK`. All
-connections are simply redirected to the true ssh-agent process via its named pipe.
+It works by creating a WSL-accessible Unix socket that can be used as `$SSH_AUTH_SOCK`. All
+connections are simply redirected to the true ssh-agent process via
+[its named pipe](https://github.com/PowerShell/Win32-OpenSSH/wiki/About-Win32-OpenSSH-and-Design-Details#af_unix-domain-sockets).
 
 ## Usage
 
@@ -14,7 +16,7 @@ may be customized by setting the `$SSH_AUTH_SOCK` environment variable (in Windo
 
 ## Installation
 
-To install the program, you need Git and Rust.
+To install the program, you need [Git](https://git-scm.com/) and [Rust](https://rustup.rs/).
 
 ```powershell
 git clone https://github.com/reynoldsbd/wsl-agent-bridge
