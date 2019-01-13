@@ -1,105 +1,80 @@
-//! Proxies named pipe traffic over a UNIX domain socket
-
+use std::env;
 use std::fs;
-use std::io::ErrorKind;
+use std::path::PathBuf;
 
-use clap::{App, Arg};
-
+use directories::BaseDirs;
 use futures::future::Future;
-
 use tokio::io;
 use tokio::prelude::*;
-
 use tokio_named_pipe::PipeStream;
-
 use tokio_uds_windows::UnixListener;
 
 
-// This application only works on Windows
 #[cfg(not(target_family = "windows"))]
-compile_error!("nprox is a Windows-only utility");
+compile_error!("this is a Windows-only utility");
 
 
-/// Proxies a connection upstream
-///
-/// Returns a closure that proxies connections. Each time the closure is invoked, the incoming
-/// client connection is proxied to a new server connection (the latter is retrieved using the
-/// `build_server` argument)
-fn proxy_to<B, C, S>(build_server: B) -> impl Fn(C) -> Result<(), io::Error>
-where B: Fn() -> Result<S, io::Error>,
-    C: AsyncRead + AsyncWrite + Send + 'static,
-    S: AsyncRead + AsyncWrite + Send + 'static
-{
-    move |client| {
-        let server = build_server()?;
+const AGENT_PIPE: &str = "\\\\.\\pipe\\openssh-ssh-agent";
+const DEFAULT_SOCK: &str = "ssh-agent.sock";
 
-        // Based on Tokio's provided proxy example:
-        // https://github.com/tokio-rs/tokio/blob/master/examples/proxy.rs
 
-        let (client_reader, client_writer) = client.split();
-        let (server_reader, server_writer) = server.split();
+/// Gets path for the bridge socket
+fn get_sock_path() -> PathBuf {
 
-        let c_to_s = io::copy(client_reader, server_writer)
-            .and_then(|(n, _, server_writer)| {
-                io::shutdown(server_writer)
-                    .map(move |_| n)
-            });
-        let s_to_c = io::copy(server_reader, client_writer)
-            .and_then(|(n, _, client_writer)| {
-                io::shutdown(client_writer)
-                    .map(move |_| n)
-            });
+    // $SSH_AUTH_SOCK may be used to override default path
+    if let Some(sock_path) = env::var_os("SSH_AUTH_SOCK") {
+        PathBuf::from(sock_path)
 
-        let proxy = c_to_s.join(s_to_c)
-            .map(|(from_client, from_server)| {
-                println!(
-                    "proxied {} bytes from client and {} bytes from server",
-                    from_client,
-                    from_server);
-            })
-            .map_err(|e| {
-                eprintln!("failed to proxy traffic: {}", e);
-            });
-
-        tokio::spawn(proxy);
-        Ok(())
+    // Otherwise, pick a well-known, private place to put the socket
+    } else {
+        let base = BaseDirs::new().expect("failed to load base dirs");
+        let mut sock_path = PathBuf::from(base.data_local_dir());
+        sock_path.push(DEFAULT_SOCK);
+        sock_path
     }
 }
 
-fn main()
-{
-    let args = App::new(env!("CARGO_PKG_NAME"))
-        .version(env!("CARGO_PKG_VERSION"))
-        .about(env!("CARGO_PKG_DESCRIPTION"))
-        .arg(Arg::with_name("PIPE")
-            .help("Named pipe to proxy")
-            .required(true)
-            .index(1))
-        .arg(Arg::with_name("SOCKET")
-            .help("Unix socket providing proxy")
-            .required(true)
-            .index(2))
-        .get_matches();
-    let pipe_name = args.value_of("PIPE")
-        .unwrap()
-        .to_owned();
-    let sock_name = args.value_of("SOCKET")
-        .unwrap();
 
-    // Clean up socket before starting
-    match fs::remove_file(sock_name)
-    {
-        Err(ref e) if e.kind() != ErrorKind::NotFound =>
-            panic!("failed to clean old socket: {}", e),
-        _ => ()
+/// Proxies an incoming connection to the real ssh-agent
+fn proxy_to_agent_pipe<C>(client: C) -> Result<(), std::io::Error>
+where C: AsyncRead + AsyncWrite + Send + 'static {
+
+    // Connect to the real pipe
+    let server = PipeStream::connect(AGENT_PIPE, None)?;
+
+    // Create futures to pipe data between the connections
+    let (client_reader, client_writer) = client.split();
+    let (server_reader, server_writer) = server.split();
+    let c_to_s = io::copy(client_reader, server_writer)
+        .and_then(|(_, _, server_writer)| io::shutdown(server_writer));
+    let s_to_c = io::copy(server_reader, client_writer)
+        .and_then(|(_, _, client_writer)| io::shutdown(client_writer));
+
+    // Add the composite future to the current runtime
+    tokio::spawn(
+        c_to_s.join(s_to_c)
+            .map(|(_, _)| ())
+            .map_err(|e| eprintln!("failed to proxy traffic: {}", e))
+    );
+    Ok(())
+}
+
+
+fn main() {
+
+    // Get and prepare socket path
+    let sock_path = get_sock_path();
+    if sock_path.exists() {
+        fs::remove_file(&sock_path)
+            .expect("failed to remove existing socket");
     }
 
-    let server = UnixListener::bind(sock_name)
-        .expect("failed to bind socket")
-        .incoming()
-        .for_each(proxy_to(move || PipeStream::connect(&pipe_name, None)))
-        .map_err(|e| eprintln!("connection error: {}", e));
-
-    // TODO: clean up socket before exiting
-    tokio::run(server);
+    // Open the socket, and proxy incoming connections to ssh-agent's pipe
+    tokio::run(
+        UnixListener::bind(&sock_path)
+            .expect("failed to bind socket")
+            .incoming()
+            .for_each(proxy_to_agent_pipe)
+            .map_err(|e| eprintln!("connection error: {}", e))
+    );
 }
