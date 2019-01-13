@@ -1,6 +1,6 @@
 [package]
 name = "wsl-agent-bridge"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["Bobby Reynolds <bobby@reynoldsbd.net>"]
 license = "MIT OR Apache-2.0"
 edition = "2018"
